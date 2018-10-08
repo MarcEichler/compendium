@@ -1,4 +1,6 @@
 import re
+import os
+from bs4 import NavigableString
 
 class DDBStatnames(object):
     # Abilities
@@ -28,6 +30,7 @@ def replaceUnicode(str):
     str = str.replace(u"\u2014", "-")
     str = str.replace(u"\u2019", "'")
     str = str.replace(u"\u2212", "-")
+    str = str.replace(u"\xa0", " ")
     return str
 
 def ddbSource(card):
@@ -80,7 +83,7 @@ def ddbParseStats(card):
         string = block.find(text = True, recursive=False)
         val = string.string if string and string.string else ""
 
-        # Parsing these stats from the Monster Manual is a pain in the ass.
+        # Parsing these stats is a major pain in the ass.
         # Ususally, the attribute name is found in one or more spans with the Bold class, the value is found in
         # other, non-bold spans or as string.
         # However, sometimes the header is not bold, or only partially bold. We must account for these bugs manually
@@ -88,37 +91,63 @@ def ddbParseStats(card):
         # If we do not find any bold spans, we assume all spans are for the stat name
         forceHeaderSpan = block.find("span", "Sans-Serif-Character-Styles_Bold-Sans-Serif") == None
 
-        # Aggregate all spans
         att = ""
-        for span in block.find_all("span"):
-            if forceHeaderSpan or ("class" in span.attrs and "Sans-Serif-Character-Styles_Bold-Sans-Serif" in span["class"]):
-                att = att + span.text
+        val = ""
+        isHeader = True
+        for child in block.children:
+            if type(child) is NavigableString:
+                text = unicode(child)
+                isHeader = False
             else:
-                val = val + span.text
+                text = child.get_text()
+            text = replaceUnicode(text)
+
+            if isHeader:
+                if forceHeaderSpan or ("class" in child.attrs and "Sans-Serif-Character-Styles_Bold-Sans-Serif" in child["class"]):
+                    isHeader = True
+                else:
+                    isHeader = False
+
+            if isHeader:
+                att = att + text
+            else:
+                val = val + text
 
         att = att.strip()
-        val = replaceUnicode(val.strip())
+        val = val.strip()
+
+        # If the given stat name is divided over the header/value pair, properly divides the pair and
+        # return [ proper name, proper value ]. Otherwise, return None
+        def fix(stats, header, value):
+
+            def fix_single_stat(stat, header, value):
+                if header == stat:
+                    return None
+
+                if not stat.startswith(header):
+                    return None
+
+                # Check if the aggregate of header and value contains the stat
+                if stat in att+val:
+                    return [stat, (att+val)[len(stat):].strip()]
+                elif stat in att+" "+val:
+                    return [stat, (att+" "+val)[len(stat):].strip()]
+                else:
+                    return None
+
+            for stat in stats:
+                f = fix_single_stat(stat, header, value)
+                if f:
+                    return f
+
+            return None
 
         # Fix bugs
         # Sometimes, "Armor" and "Class" are divided among name and value.
-        if att == "Armor" and "Class" in val:
-            att = DDBStatnames.ARMOR_CLASS
-            val = val[:6]
-        # Sometimes, "Hit" and "Points" are arbitrarily divided among header and value
-        if att != DDBStatnames.HIT_POINTS and DDBStatnames.HIT_POINTS.startswith(att) and DDBStatnames.HIT_POINTS in att+val:
-            full = att + val
-            att = DDBStatnames.HIT_POINTS
-            val = full[len(att):].strip()
-
-        # Split "Hit Points" field into hit points and hit dice
-        if att == DDBStatnames.HIT_POINTS:
-            m = re.match("(.*)\s*\((.*)\)", val)
-            if not m or m.groups() < 2:
-                print "Unable to parse Hit Points!"
-                return None
-
-            stats[DDBStatnames.HIT_POINTS] = m.group(1)
-            stats[DDBStatnames.HIT_DICE] = m.group(2)
+        f = fix([DDBStatnames.ARMOR_CLASS, DDBStatnames.HIT_POINTS, DDBStatnames.SPEED], att, val)
+        if f:
+            att = f[0]
+            val = f[1]
 
         stats[att] = val
 

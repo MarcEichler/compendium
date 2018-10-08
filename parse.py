@@ -5,7 +5,7 @@ import re
 import json
 import sys
 from bs4 import BeautifulSoup
-from enum import Enum
+import collections
 
 from creature import Creature
 
@@ -13,18 +13,32 @@ from creature import Creature
 infile = "/home/marc/Downloads/creatures.html"
 incompendium = "/run/user/1000/gvfs/smb-share:server=192.168.178.34,share=steamapps/GM Forge - Virtual Tabletop/public/packs/D&D 5E.json"
 
-# The output folder. All output files will be put into this folder
-outdir = os.path.join(".", "Monsters")
+outdir = "/run/user/1000/gvfs/smb-share:server=192.168.178.34,share=steamapps/GM Forge - Virtual Tabletop/public/"
 
-# Returns the given name, transformed for use in file names.
-# This replaces forbidden characters, such as /, with a -
-def toFileName(name):
-    return name.replace("/", "-")
+# The output folder. All output files will be put into this folder
+outimagedir = os.path.join(outdir, "custom", "monsters")
+outcompendium = os.path.join(outdir, "packs", "comp.json")
+
+def addToCompendium(creatures):
+    with open(incompendium, "r") as f:
+        comp = json.load(f, object_pairs_hook=collections.OrderedDict)
+
+    print "Read compendium"
+
+    comp_monsters = comp["content"]["Monsters"]["data"]
+    for creature in creatures:
+        comp_monsters.append(creature.toFiveForge())
+
+    # Write modied compendium
+    with open(outcompendium, "w") as f:
+        json.dump(comp, f, indent=2)
+
+    return
 
 def writeCreatures():
     print "### Writing", len(creatures), "creatures..."
     for c in creatures:
-        outfile = os.path.join(outdir, toFileName(c.name)+".json")
+        outfile = os.path.join(outdir, c.filename()+".json")
         print "\tWriting", c.name+"..."
         json = c.json()
         with open(outfile, "w") as fp:
@@ -33,15 +47,13 @@ def writeCreatures():
     return
     
 def downloadImages():
-    print "### Downloading images...", len(creatures)
+    print "### Downloading images..."
     for c in creatures:
         if c.image:
-            outfile = os.path.join(outdir, toFileName(c.name)+".jpeg")
+            outfile = os.path.join(outimagedir, c.filename()+".jpeg")
             if not os.path.isfile(outfile):
                 print "\t"+"Downloading", outfile+"..."
                 os.system("wget "+c.image+" -O \""+outfile+"\" > /dev/null")
-            else:
-                print "\t"+outfile, "already downloaded"
     print "\tAll images downloaded"
 
     return
@@ -66,8 +78,6 @@ for infile in infiles:
         print "### Parsing file", infile
         for card in soup.select('div[class*=\"Basic-Text-Frame\"]'):
             c = Creature.fromDDBStatCard(card)
-            print c.toFiveForge()
-            exit(1)
             if c:
                 creatures.append(c)
             else:
@@ -78,8 +88,11 @@ for infile in infiles:
             print "Creating output folder", outdir
             os.makedirs(outdir)
 
+# Sort creature list
+creatures = sorted(creatures, key=lambda creature : creature.name)
+
 # Write all found creatures
-writeCreatures()
+addToCompendium(creatures)
 
 downloadImages()
 
